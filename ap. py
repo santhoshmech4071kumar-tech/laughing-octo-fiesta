@@ -1,0 +1,143 @@
+import streamlit as st
+import pandas as pd
+import seaborn as sns
+import matplotlib.pyplot as plt
+from io import BytesIO
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, Image
+from reportlab.lib.styles import getSampleStyleSheet
+
+st.set_page_config(page_title="Descriptive Data Analysis Tool", layout="wide")
+
+st.title("📊 Descriptive Data Analysis Tool")
+
+# File uploader
+uploaded_file = st.file_uploader("Upload a CSV or Excel file", type=["csv", "xlsx"])
+
+if uploaded_file:
+    # Read file
+    try:
+        if uploaded_file.name.endswith(".csv"):
+            df = pd.read_csv(uploaded_file)
+        else:
+            df = pd.read_excel(uploaded_file)
+    except Exception as e:
+        st.error(f"Error loading file: {e}")
+        st.stop()
+
+    st.subheader("🔍 Preview of Data")
+    st.dataframe(df.head())
+
+    st.subheader("📈 Descriptive Statistics")
+    desc_stats = df.describe(include="all").transpose()
+    st.write(desc_stats)
+
+    # ----------------- DOWNLOAD AS EXCEL -----------------
+    def convert_to_excel(df):
+        output = BytesIO()
+        with pd.ExcelWriter(output, engine="openpyxl") as writer:
+            df.to_excel(writer, sheet_name="Descriptive Stats")
+        return output.getvalue()
+
+    excel_data = convert_to_excel(desc_stats)
+    st.download_button(
+        label="⬇️ Download Excel Report",
+        data=excel_data,
+        file_name="descriptive_analysis.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
+
+    # ----------------- VISUALIZATIONS -----------------
+    st.subheader("📊 Visualizations")
+    numeric_cols = df.select_dtypes(include="number").columns
+    plots = []  # store plots for PDF
+
+    if len(numeric_cols) > 0:
+        st.write("### Histogram")
+        col = st.selectbox("Choose a column for Histogram", numeric_cols)
+        fig, ax = plt.subplots()
+        sns.histplot(df[col], kde=True, ax=ax)
+        st.pyplot(fig)
+
+        buf = BytesIO()
+        fig.savefig(buf, format="png")
+        buf.seek(0)
+        plots.append(("Histogram", buf))
+
+        st.write("### Boxplot")
+        fig, ax = plt.subplots()
+        sns.boxplot(x=df[col], ax=ax)
+        st.pyplot(fig)
+
+        buf = BytesIO()
+        fig.savefig(buf, format="png")
+        buf.seek(0)
+        plots.append(("Boxplot", buf))
+
+        if len(numeric_cols) > 1:
+            st.write("### Correlation Heatmap")
+            fig, ax = plt.subplots(figsize=(8, 6))
+            sns.heatmap(df[numeric_cols].corr(), annot=True, cmap="coolwarm", ax=ax)
+            st.pyplot(fig)
+
+            buf = BytesIO()
+            fig.savefig(buf, format="png")
+            buf.seek(0)
+            plots.append(("Correlation Heatmap", buf))
+    else:
+        st.warning("No numeric columns found for visualization.")
+
+    # ----------------- DOWNLOAD AS PDF -----------------
+    def convert_to_pdf(df, desc_stats, plots):
+        buffer = BytesIO()
+        doc = SimpleDocTemplate(buffer)
+        styles = getSampleStyleSheet()
+        elements = []
+
+        # Title
+        elements.append(Paragraph("📊 Descriptive Data Analysis Report", styles['Title']))
+        elements.append(Spacer(1, 12))
+
+        # Data Preview
+        elements.append(Paragraph("🔍 First 5 Rows of Data", styles['Heading2']))
+        preview_table = [df.head().columns.to_list()] + df.head().values.tolist()
+        elements.append(Table(preview_table))
+        elements.append(Spacer(1, 24))
+
+        # Statistics
+        elements.append(Paragraph("📈 Descriptive Statistics", styles['Heading2']))
+        stats_table = [desc_stats.reset_index().columns.to_list()] + desc_stats.reset_index().values.tolist()
+        elements.append(Table(stats_table))
+        elements.append(Spacer(1, 24))
+
+        # Mean, Median, Mode Summary
+        elements.append(Paragraph("📌 Key Summary (Mean, Median, Mode)", styles['Heading2']))
+        numeric_cols = df.select_dtypes(include="number").columns
+        summary_data = [["Column", "Mean", "Median", "Mode"]]
+        for col in numeric_cols:
+            mean_val = round(df[col].mean(), 2)
+            median_val = round(df[col].median(), 2)
+            mode_val = df[col].mode()[0] if not df[col].mode().empty else "N/A"
+            summary_data.append([col, mean_val, median_val, mode_val])
+        elements.append(Table(summary_data))
+        elements.append(Spacer(1, 24))
+
+        # Charts
+        for title, buf in plots:
+            elements.append(Paragraph(title, styles['Heading2']))
+            elements.append(Image(buf, width=400, height=250))
+            elements.append(Spacer(1, 12))
+
+        doc.build(elements)
+        buffer.seek(0)
+        return buffer
+
+    pdf_data = convert_to_pdf(df, desc_stats, plots)
+    st.download_button(
+        label="⬇️ Download PDF Report (with Data + Stats + Summary + Charts)",
+        data=pdf_data,
+        file_name="descriptive_analysis.pdf",
+        mime="application/pdf"
+    )
+
+else:
+    st.info("👆 Upload a CSV or Excel file to get started.")
